@@ -16,6 +16,7 @@ eggs/
 .eggs/
 lib/
 lib64/
+lib64
 parts/
 sdist/
 var/
@@ -24,6 +25,7 @@ wheels/
 .installed.cfg
 *.egg
 MANIFEST
+pip-selfcheck.json
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
@@ -90,6 +92,12 @@ ENV/
 env.bak/
 venv.bak/
 
+# VirtualEnv stuff
+bin/
+Scripts/
+include/
+.project
+
 # Spyder project settings
 .spyderproject
 .spyproject
@@ -102,3 +110,6 @@ venv.bak/
 
 # mypy
 .mypy_cache/
+
+# Desktop shortcuts
+*.lnk
