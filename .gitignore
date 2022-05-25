@@ -113,3 +113,13 @@ include/
 
 # Desktop shortcuts
 *.lnk
+
+# Other SCM software
+.svn/
+
+# visaplan project setup
+auto.msg
+update-module
+
+# Portable editor configuration
+.editorconfig
