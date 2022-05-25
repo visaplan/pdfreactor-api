@@ -120,6 +120,7 @@ include/
 # visaplan project setup
 auto.msg
 update-module
+tools/
 
 # Portable editor configuration
 .editorconfig
