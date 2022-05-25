@@ -20,9 +20,9 @@ To make use of it, you need
 Features
 --------
 
-- The module ``pdfreactor.api`` contains the Python API version 6
+- The module ``pdfreactor.api`` contains the Python API version 8
   (based on ``wrappers/python/lib/PDFreactor.py`` from the PDFreactor tarball),
-  suitable to talk to PDFreactor server versions 8 to 10.
+  suitable to talk to PDFreactor server versions 8 to 11.
 
 
 Examples
