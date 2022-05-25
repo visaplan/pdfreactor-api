@@ -51,13 +51,13 @@ config = {
     # Add user style sheets
     'userStyleSheets': [
         {
-            'content': "@page {" \
-                           "@top-center {" \
-                               "content: 'PDFreactor Python API demonstration';" \
-                           "}" \
-                           "@bottom-center {" \
-                               "content: 'Created on " + date + "';" \
-                           "}" \
+            'content': "@page {"
+                           "@top-center {"
+                               "content: 'PDFreactor Python API demonstration';"
+                           "}"
+                           "@bottom-center {"
+                               "content: 'Created on " + date + "';"
+                           "}"
                        "}"
         },
         {'uri': "../../resources/common.css"}
