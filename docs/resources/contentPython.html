@@ -1,0 +1,85 @@
+<html>
+    <head>
+        <title>Python API</title>
+    </head>
+    <body>
+        <h1>This is a demonstration of the PDFreactor Python API.</h1>
+        <div class="block">
+            <p>At the beginning you have to import the PDFreactor Python module.
+            To ensure that the example works out-of-the-box you could use something similar to the example shown below.</p>
+
+            <pre><span>import</span> os
+<span>import</span> sys
+sys<span class="c000080">.</span>path<span class="c000080">.</span>append<span class="c000080">(</span>os<span class="c000080">.</span>path<span class="c000080">
+    .</span>abspath<span class="c000080">(</span>os<span class="c000080">.</span>path<span class="c000080">.</span>join<span class="c000080">(</span>os<span class="c000080">.</span>path<span class="c000080">.</span>dirname<span class="c000080">(</span> __file__ <span class="c000080">),</span> <span class="c808080">'../lib/'</span><span class="c000080">)))</span>
+<span>from</span> PDFreactor <span>import</span> *</pre>
+        </div>
+
+        <div class="block">
+            <p>You can create a new PDFreactor instance now. Therefore you should store this instance in a new variable named similar to "pdfReactor". This variable will be used later on to convert
+            your input document to the PDF document. Please refer to the example below.</p>
+
+            <pre>pdfReactor <span class="c000080">=</span> PDFreactor<span class="c000080">()</span></pre>
+        </div>
+
+        <div class="block">
+            <p>Before you can create a PDF document using the PDFreactor Python API you need to create the PDFreactor configuration object. All the information necessary about the resulting PDF is stored in this object.</p>
+
+            <pre>config <span class="c000080">= {</span>
+    <span class="c808080">'document'</span><span class="c000080">:</span> <span class="c808080">"&lt;html&gt;&lt;body&gt;&lt;p&gt;Hello World&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;"</span><span class="c000080">,</span>
+    <span class="c808080">'title'</span><span class="c000080">:</span> <span class="c808080">"Hello World sample"</span><span class="c000080">,</span>
+    <span class="c808080">'viewerPreferences'</span><span class="c000080">: [</span>
+        PDFreactor<span class="c000080">.</span>ViewerPreferences<span class="c000080">.</span>FIT_WINDOW<span class="c000080">,</span>
+        PDFreactor<span class="c000080">.</span>ViewerPreferences<span class="c000080">.</span>PAGE_MODE_USE_THUMBS
+    <span class="c000080">],</span>
+    <span class="c808080">'userStyleSheets'</span><span class="c000080">: [</span>
+        <span class="c000080">{</span>
+            <span class="c808080">'content'</span><span class="c000080">:</span> <span class="c808080">"body {"</span>\
+                           <span class="c808080">"margin: 1cm;"</span>\
+                       <span class="c808080">"}"</span>
+        <span class="c000080">}</span>
+    <span class="c000080">]</span>
+<span class="c000080">}</span></pre>
+
+            <p>The example above describes the configuration object of a very simple "Hello World" document with the title "Hello World sample", a margin of 1cm on each side and some ViewerPreferences.
+            It is of course possible to personalize the config object as needed.
+            For further information about possible configuration properties please refer to the
+            <a href="https://www.pdfreactor.com/product/doc_html/index.html">PDFreactor Manual</a>.</p>
+        </div>
+
+        <div class="block">
+            <p>Only the PDF conversion is left to successfully generate a PDF document using the PDFreactor Python API. Therefore you could add something similar to the code snippet shown below to your Python file.</p>
+
+            <pre><span class="c008000"># The resulting PDF</span>
+result <span class="c000080">=</span> <span>None</span>
+
+<span>try</span>: 
+    <span class="c008000"># Render document and save result</span>
+    result <span class="c000080">=</span> pdfReactor<span class="c000080">.</span>convertAsBinary<span class="c000080">(</span>config<span class="c000080">)</span>
+<span>except</span> Exception <span>as</span> e<span class="c000080">:</span>
+    <span class="c008000"># Not successful, print error and log</span>
+    print<span class="c000080">(</span><span class="c808080">"Content-type: text/html\n\n"</span><span class="c000080">)</span>
+    print<span class="c000080">(</span><span class="c808080">"&lt;h1&gt;An Error Has Occurred&lt;/h1&gt;"</span><span class="c000080">)</span>
+    print<span class="c000080">(</span><span class="c808080">"&lt;h2&gt;"</span> <span class="c000080">+</span> str<span class="c000080">(</span>e<span class="c000080">)</span> <span class="c000080">+</span> <span class="c808080">"&lt;/h2&gt;"</span><span class="c000080">)</span>
+    
+<span class="c008000"># Check if successful</span>
+<span>if</span> result <span class="c000080">!=</span> <span>None</span><span class="c000080">:</span>
+    <span>if</span> sys<span class="c000080">.</span>platform <span class="c000080">==</span> <span class="c808080">"win32"</span><span class="c000080">:</span>
+        <span>import</span> msvcrt
+        msvcrt<span class="c000080">.</span>setmode<span class="c000080">(</span>sys<span class="c000080">.</span>stdout<span class="c000080">.</span>fileno<span class="c000080">(),</span> os<span class="c000080">.</span>O_BINARY<span class="c000080">)</span>
+
+    <span class="c008000"># Set the correct header for PDF output and echo PDF content</span>
+    <span>print</span><span class="c000080">(</span><span class="c808080">"Content-Type: application/pdf\n"</span><span class="c000080">)</span>
+
+    <span class="c008000"># Check Python version</span>
+    <span>if</span> sys<span class="c000080">.</span>version_info<span class="c000080">.</span>major <span class="c000080">==</span> <span class="cFF0000">2</span><span class="c000080">:</span>
+        <span>print</span><span class="c000080">(</span>result<span class="c000080">)</span>
+    <span>else</span><span class="c000080">:</span>
+        sys<span class="c000080">.</span>stdout<span class="c000080">.</span>flush<span class="c000080">()</span>
+        sys<span class="c000080">.</span>stdout<span class="c000080">.</span>buffer<span class="c000080">.</span>write<span class="c000080">(</span>result<span class="c000080">)</span></pre>
+
+            <p>This code snippet performs a check whether the conversion was successful or not. If the conversion was unsuccessful an appropriate error warning will be displayed.
+            For example a missing document property in the configuration object will trigger such an error message. If the conversion was successful the resulting PDF document will be displayed via the browsers PDF viewer plug-in.</p>
+        </div>
+    </body>
+</html>
