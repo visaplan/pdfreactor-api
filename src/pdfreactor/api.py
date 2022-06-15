@@ -28,6 +28,38 @@
 # Changes by Tobias Herp, visaplan GmbH:
 # - moved the Python version switching to the top (out of the executed code)
 # - comparison to None by identity rather than equality
+# - options processing:
+#   - _spiced_config method (to have always a config dict with client info)
+#   - _spiced_headers method (code deduplication for headers and cookies)
+#   - _sacs helper function for (stream, connectionSettings) options
+# - class cleanup:
+#   - removed the `url` class attribute; turned it in a property instead
+#   - modified the apiKey property setter to store a quoted value; pre-quoted
+#     values are used as they are.
+# - exceptions:
+#   - Moved all exception classes to a dedicated .exceptions module.
+#   - Removed all classes which inherited from ServerException,
+#   - which in turn now inherits from HTTPError;
+#   - instead of computing the errorId beforehand (to choose an exception class),
+#     we provide a read-only property of that name.
+#   - Removed the now obsolete method PDFreactor._createServerException.
+#   - New property ServerException.result
+#   - New property ServerException.pdfreactor_error
+#     (containing the 'error' value, if .result contains an JSON object,
+#     or some fallback text which cites the first 200 characters of the textual
+#     result)
+#   - New property ServerException.pdfreactor_says
+#     (after some strings used before when creating exceptions)
+#   - UnreachableServiceException:
+#     - Arguments are now (Exception, URL) instead of the message text;
+#     - Instead of computing the message for creation, we do this work
+#       when creating the string representation.
+# - other changes:
+#   - if appending an API key to the service URL, always properly quote it
+#     (using urllib[.parse].quote via .tools.quoted_key)
+#   - instead of monkey-patching the get_method method, use {Get,Delete}Request
+#     classes
+#   - moved the (somewhat hidden) VERSION attribute up
 
 import json
 import sys
@@ -50,49 +82,94 @@ else:
         # we reproduce the original behaviour here ...
         return s.encode()
 
+from ._args import _sacs
+from .exceptions import ServerException, UnreachableServiceException
+from .tools import quoted_key
+
+__all__ = [
+    'PDFreactor',  # the API object
+    # exception classes (more in ./exceptions.py):
+    'UnreachableServiceException',
+    'ServerException',  # an HTTPError
+    ]
+
+
+class GetRequest(Request):
+    def get_method(self):
+        return 'get'
+
+
+class DeleteRequest(Request):
+    def get_method(self):
+        return 'delete'
+
 
 class PDFreactor:
     @property
     def apiKey(self):
-        return self.__apiKey
+        return quoted_key(self.__apiKey)
 
     @apiKey.setter
     def apiKey(self, apiKey):
-        self.__apiKey = apiKey
-    url = ""
+        self.__apiKey = quoted_key(apiKey)
 
-    def __init__(self, url="http://localhost:9423/service/rest"):
+    @property
+    def url(self):
+        return self.__url
+
+    @url.setter
+    def url(self, val):
+        if val is None:
+            val = "http://localhost:9423/service/rest"
+        elif val.endswith('/'):
+            val = val.rstrip('/')
+        self.__url = val
+
+    def __init__(self, url=None):
         """Constructor"""
-        self.url = url
-        if url is None:
-            self.url = "http://localhost:9423/service/rest"
-        if self.url.endswith('/'):
-            self.url = self.url[:-1]
+        self.url = url  # the setter takes care of the default value
         self.__apiKey = None
 
+    VERSION = 8
+
+    def _spiced_config(self, config):
+        if config is None:
+            config = {}
+        config.update({
+            'clientName': "PYTHON",
+            'clientVersion': PDFreactor.VERSION,
+            })
+        return config
+
+    def _spiced_headers(self, connectionSettings):
+        # In HTTP/1.x, header fields names are case-insensitive:
+        # https://datatracker.ietf.org/doc/html/rfc7230#section-3.2 
+        # In HTTP/2.0, they must be converted to lowercase:
+        # https://www.rfc-editor.org/rfc/rfc7540#section-8.1.2
+        if connectionSettings is None:
+            connectionSettings = {}
+        _h = connectionSettings.get('headers', {})
+        ignored = set(['content-type', 'range', 'user-agent'])
+        headers = {key: _h[key]
+                   for key in _h.keys()
+                       if key.lower() not in ignored}
+        headers.update({
+            'Content-Type':     'application/json',
+            'User-Agent':       'PDFreactor Python API v8',
+            'X-RO-User-Agent':  'PDFreactor Python API v8',
+            })
+        if 'cookies' in connectionSettings:
+            headers['Cookie'] = '; '.join(['%s=%s' % (key, value) for (key, value) in connectionSettings['cookies'].items()])
+        return headers
+
     def convert(self, config, connectionSettings=None):
-        if config is not None:
-            config['clientName'] = "PYTHON"
-            config['clientVersion'] = PDFreactor.VERSION
+        config = self._spiced_config(config)
+        headers = self._spiced_headers(connectionSettings)
 
         url = self.url + "/convert.json"
         if self.apiKey != None:
-            url += '?apiKey=' + self.apiKey
+            url += '?apiKey=' + quoted_key(self.apiKey)
         result = ""
-        if (connectionSettings is not None and 'headers' in connectionSettings and len(connectionSettings['headers'].keys()) == False):
-            headers = connectionSettings['headers']
-        else:
-            headers = {}
-            if connectionSettings is not None and 'headers' in connectionSettings:
-                for (key, value) in connectionSettings['headers'].items():
-                    lcKey = key.lower()
-                    if lcKey != "content-type" and lcKey != "range" and lcKey != "user-agent":
-                        headers[key] = value
-        headers['Content-Type'] = 'application/json'
-        if connectionSettings is not None and 'cookies' in connectionSettings:
-            headers['Cookie'] = '; '.join(['%s=%s' % (key, value) for (key, value) in connectionSettings['cookies'].items()])
-        headers['User-Agent'] = 'PDFreactor Python API v8'
-        headers['X-RO-User-Agent'] = 'PDFreactor Python API v8'
         req = None
         try:
             options = json.dumps(config)
@@ -100,61 +177,26 @@ class PDFreactor:
             response = urlopen(req)
             result = response.read().decode('utf-8')
         except HTTPError as e:
-            result = json.loads(e.read().decode('utf-8'))
-            errorId = ''
-            if hasattr(e, 'headers'):
-                errorId = e.headers['X-RO-Error-ID']
-            if e.code == 422:
-                raise self._createServerException(errorId, result['error'], result)
-            elif e.code == 400:
-                raise self._createServerException(errorId, 'Invalid client data. ' + result['error'], result)
-            elif e.code == 401:
-                raise self._createServerException(errorId, 'Unauthorized. ' + result['error'], result)
-            elif e.code == 413:
-                raise self._createServerException(errorId, 'The configuration is too large to process.', result)
-            elif e.code == 500:
-                raise self._createServerException(errorId, result['error'], result)
-            elif e.code == 503:
-                raise self._createServerException(errorId, 'PDFreactor Web Service is unavailable.', result)
-            elif e.code > 400:
-                raise self._createServerException(errorId, 'PDFreactor Web Service error (status: ' + str(e.code) + ').', result)
+            raise ServerException(e)
         except Exception as e:
-            msg = e
-            if hasattr(e, 'reason'):
-                msg = e.reason
-            raise UnreachableServiceException('Error connecting to PDFreactor Web Service at ' + self.url + '. Please make sure the PDFreactor Web Service is installed and running (Error: ' + str(msg) + ')')
+            raise UnreachableServiceException(e, url)
         return json.loads(result)
 
-    def convertAsBinary(self, config, stream=None, connectionSettings=None):
-        if config is not None:
-            config['clientName'] = "PYTHON"
-            config['clientVersion'] = PDFreactor.VERSION
+    def convertAsBinary(self, config, *args, **kwargs):
+        config = self._spiced_config(config)
+        set_trace()
+        stream, connectionSettings = _sacs(*args, **kwargs)
+        headers = self._spiced_headers(connectionSettings)
 
         url = self.url + "/convert.bin"
-        if isinstance(stream, dict):
-            connectionSettings = stream
-            stream = None
         if self.apiKey != None:
-            url += '?apiKey=' + self.apiKey
+            url += '?apiKey=' + quoted_key(self.apiKey)
         result = ""
-        if (connectionSettings is not None and 'headers' in connectionSettings and len(connectionSettings['headers'].keys()) == False):
-            headers = connectionSettings['headers']
-        else:
-            headers = {}
-            if connectionSettings is not None and 'headers' in connectionSettings:
-                for (key, value) in connectionSettings['headers'].items():
-                    lcKey = key.lower()
-                    if lcKey != "content-type" and lcKey != "range" and lcKey != "user-agent":
-                        headers[key] = value
-        headers['Content-Type'] = 'application/json'
-        if connectionSettings is not None and 'cookies' in connectionSettings:
-            headers['Cookie'] = '; '.join(['%s=%s' % (key, value) for (key, value) in connectionSettings['cookies'].items()])
-        headers['User-Agent'] = 'PDFreactor Python API v8'
-        headers['X-RO-User-Agent'] = 'PDFreactor Python API v8'
         req = None
         try:
             options = json.dumps(config)
             req = Request(url, _encoded(options), headers)
+            # pp(url, options, headers)
             response = urlopen(req)
             if stream:
                 CHUNK = 2 * 1024
@@ -168,53 +210,22 @@ class PDFreactor:
             else:
                 result = response.read()
         except HTTPError as e:
-            errorId = ''
-            if hasattr(e, 'headers'):
-                errorId = e.headers['X-RO-Error-ID']
-            if e.code == 422:
-                raise self._createServerException(errorId, e.read().decode('utf-8'))
-            elif e.code == 400:
-                raise self._createServerException(errorId, 'Invalid client data. ' + e.read().decode('utf-8'))
-            elif e.code == 401:
-                raise self._createServerException(errorId, 'Unauthorized. ' + e.read().decode('utf-8'))
-            elif e.code == 413:
-                raise self._createServerException(errorId, 'The configuration is too large to process.')
-            elif e.code == 500:
-                raise self._createServerException(errorId, e.read().decode('utf-8'))
-            elif e.code == 503:
-                raise self._createServerException(errorId, 'PDFreactor Web Service is unavailable.')
-            elif e.code > 400:
-                raise self._createServerException(errorId, 'PDFreactor Web Service error (status: ' + str(e.code) + ').')
+            raise ServerException(e)
+            set_trace()
+            ne = ServerException(e)
+            raise ne
         except Exception as e:
-            msg = e
-            if hasattr(e, 'reason'):
-                msg = e.reason
-            raise UnreachableServiceException('Error connecting to PDFreactor Web Service at ' + self.url + '. Please make sure the PDFreactor Web Service is installed and running (Error: ' + str(msg) + ')')
+            raise UnreachableServiceException(e, url)
         return result
 
     def convertAsync(self, config, connectionSettings=None):
-        if config is not None:
-            config['clientName'] = "PYTHON"
-            config['clientVersion'] = PDFreactor.VERSION
+        config = self._spiced_config(config)
+        headers = self._spiced_headers(connectionSettings)
 
         url = self.url + "/convert/async.json"
         if self.apiKey != None:
-            url += '?apiKey=' + self.apiKey
+            url += '?apiKey=' + quoted_key(self.apiKey)
         result = ""
-        if (connectionSettings is not None and 'headers' in connectionSettings and len(connectionSettings['headers'].keys()) == False):
-            headers = connectionSettings['headers']
-        else:
-            headers = {}
-            if connectionSettings is not None and 'headers' in connectionSettings:
-                for (key, value) in connectionSettings['headers'].items():
-                    lcKey = key.lower()
-                    if lcKey != "content-type" and lcKey != "range" and lcKey != "user-agent":
-                        headers[key] = value
-        headers['Content-Type'] = 'application/json'
-        if connectionSettings is not None and 'cookies' in connectionSettings:
-            headers['Cookie'] = '; '.join(['%s=%s' % (key, value) for (key, value) in connectionSettings['cookies'].items()])
-        headers['User-Agent'] = 'PDFreactor Python API v8'
-        headers['X-RO-User-Agent'] = 'PDFreactor Python API v8'
         req = None
         try:
             options = json.dumps(config)
@@ -222,29 +233,10 @@ class PDFreactor:
             response = urlopen(req)
             result = response.read().decode('utf-8')
         except HTTPError as e:
-            result = json.loads(e.read().decode('utf-8'))
-            errorId = ''
-            if hasattr(e, 'headers'):
-                errorId = e.headers['X-RO-Error-ID']
-            if e.code == 422:
-                raise self._createServerException(errorId, result['error'], result)
-            elif e.code == 400:
-                raise self._createServerException(errorId, 'Invalid client data. ' + result['error'], result)
-            elif e.code == 401:
-                raise self._createServerException(errorId, 'Unauthorized. ' + result['error'], result)
-            elif e.code == 413:
-                raise self._createServerException(errorId, 'The configuration is too large to process.', result)
-            elif e.code == 500:
-                raise self._createServerException(errorId, result['error'], result)
-            elif e.code == 503:
-                raise self._createServerException(errorId, 'Asynchronous conversions are unavailable.', result)
-            elif e.code > 400:
-                raise self._createServerException(errorId, 'PDFreactor Web Service error (status: ' + str(e.code) + ').', result)
+            raise ServerException(e)
         except Exception as e:
-            msg = e
-            if hasattr(e, 'reason'):
-                msg = e.reason
-            raise UnreachableServiceException('Error connecting to PDFreactor Web Service at ' + self.url + '. Please make sure the PDFreactor Web Service is installed and running (Error: ' + str(msg) + ')')
+            raise UnreachableServiceException(e, url)
+
         documentId = None
         if response is not None and response.info() is not None:
             location = response.info().get("Location")
@@ -261,126 +253,53 @@ class PDFreactor:
         return documentId
 
     def getProgress(self, documentId, connectionSettings=None):
+        headers = self._spiced_headers(connectionSettings)
+
         url = self.url + "/progress/" + documentId + ".json"
         if self.apiKey != None:
-            url += '?apiKey=' + self.apiKey
+            url += '?apiKey=' + quoted_key(self.apiKey)
         result = ""
-        if (connectionSettings is not None and 'headers' in connectionSettings and len(connectionSettings['headers'].keys()) == False):
-            headers = connectionSettings['headers']
-        else:
-            headers = {}
-            if connectionSettings is not None and 'headers' in connectionSettings:
-                for (key, value) in connectionSettings['headers'].items():
-                    lcKey = key.lower()
-                    if lcKey != "content-type" and lcKey != "range" and lcKey != "user-agent":
-                        headers[key] = value
-        headers['Content-Type'] = 'application/json'
-        if connectionSettings is not None and 'cookies' in connectionSettings:
-            headers['Cookie'] = '; '.join(['%s=%s' % (key, value) for (key, value) in connectionSettings['cookies'].items()])
-        headers['User-Agent'] = 'PDFreactor Python API v8'
-        headers['X-RO-User-Agent'] = 'PDFreactor Python API v8'
         req = None
         try:
-            req = Request(url, None, headers)
+            req = GetRequest(url, None, headers)
             response = urlopen(req)
-            req.get_method = lambda: "get"
             result = response.read().decode('utf-8')
         except HTTPError as e:
-            result = json.loads(e.read().decode('utf-8'))
-            errorId = ''
-            if hasattr(e, 'headers'):
-                errorId = e.headers['X-RO-Error-ID']
-            if e.code == 422:
-                raise self._createServerException(errorId, result['error'], result)
-            elif e.code == 404:
-                raise self._createServerException(errorId, 'Document with the given ID was not found. ' + result['error'], result)
-            elif e.code == 401:
-                raise self._createServerException(errorId, 'Unauthorized. ' + result['error'], result)
-            elif e.code == 503:
-                raise self._createServerException(errorId, 'PDFreactor Web Service is unavailable.', result)
-            elif e.code > 400:
-                raise self._createServerException(errorId, 'PDFreactor Web Service error (status: ' + str(e.code) + ').', result)
+            raise ServerException(e)
         except Exception as e:
-            msg = e
-            if hasattr(e, 'reason'):
-                msg = e.reason
-            raise UnreachableServiceException('Error connecting to PDFreactor Web Service at ' + self.url + '. Please make sure the PDFreactor Web Service is installed and running (Error: ' + str(msg) + ')')
+            raise UnreachableServiceException(e, url)
         return json.loads(result)
 
     def getDocument(self, documentId, connectionSettings=None):
+        headers = self._spiced_headers(connectionSettings)
+
         url = self.url + "/document/" + documentId + ".json"
         if self.apiKey != None:
-            url += '?apiKey=' + self.apiKey
+            url += '?apiKey=' + quoted_key(self.apiKey)
         result = ""
-        if (connectionSettings is not None and 'headers' in connectionSettings and len(connectionSettings['headers'].keys()) == False):
-            headers = connectionSettings['headers']
-        else:
-            headers = {}
-            if connectionSettings is not None and 'headers' in connectionSettings:
-                for (key, value) in connectionSettings['headers'].items():
-                    lcKey = key.lower()
-                    if lcKey != "content-type" and lcKey != "range" and lcKey != "user-agent":
-                        headers[key] = value
-        headers['Content-Type'] = 'application/json'
-        if connectionSettings is not None and 'cookies' in connectionSettings:
-            headers['Cookie'] = '; '.join(['%s=%s' % (key, value) for (key, value) in connectionSettings['cookies'].items()])
-        headers['User-Agent'] = 'PDFreactor Python API v8'
-        headers['X-RO-User-Agent'] = 'PDFreactor Python API v8'
         req = None
         try:
-            req = Request(url, None, headers)
+            req = GetRequest(url, None, headers)
             response = urlopen(req)
-            req.get_method = lambda: "get"
             result = response.read().decode('utf-8')
         except HTTPError as e:
-            result = json.loads(e.read().decode('utf-8'))
-            errorId = ''
-            if hasattr(e, 'headers'):
-                errorId = e.headers['X-RO-Error-ID']
-            if e.code == 422:
-                raise self._createServerException(errorId, result['error'], result)
-            elif e.code == 404:
-                raise self._createServerException(errorId, 'Document with the given ID was not found. ' + result['error'], result)
-            elif e.code == 401:
-                raise self._createServerException(errorId, 'Unauthorized. ' + result['error'], result)
-            elif e.code == 503:
-                raise self._createServerException(errorId, 'PDFreactor Web Service is unavailable.', result)
-            elif e.code > 400:
-                raise self._createServerException(errorId, 'PDFreactor Web Service error (status: ' + str(e.code) + ').', result)
+            raise ServerException(e)
         except Exception as e:
-            msg = e
-            if hasattr(e, 'reason'):
-                msg = e.reason
-            raise UnreachableServiceException('Error connecting to PDFreactor Web Service at ' + self.url + '. Please make sure the PDFreactor Web Service is installed and running (Error: ' + str(msg) + ')')
+            raise UnreachableServiceException(e, url)
         return json.loads(result)
 
-    def getDocumentAsBinary(self, documentId, stream=None, connectionSettings=None):
+    def getDocumentAsBinary(self, documentId, *args, **kwargs):
+        stream, connectionSettings = _sacs(*args, **kwargs)
+        headers = self._spiced_headers(connectionSettings)
+
         url = self.url + "/document/" + documentId + ".bin"
-        if isinstance(stream, dict):
-            connectionSettings = stream
-            stream = None
         if self.apiKey != None:
-            url += '?apiKey=' + self.apiKey
+            url += '?apiKey=' + quoted_key(self.apiKey)
         result = ""
-        if (connectionSettings is not None and 'headers' in connectionSettings and len(connectionSettings['headers'].keys()) == False):
-            headers = connectionSettings['headers']
-        else:
-            headers = {}
-            if connectionSettings is not None and 'headers' in connectionSettings:
-                for (key, value) in connectionSettings['headers'].items():
-                    lcKey = key.lower()
-                    if lcKey != "content-type" and lcKey != "range" and lcKey != "user-agent":
-                        headers[key] = value
-        headers['Content-Type'] = 'application/json'
-        if connectionSettings is not None and 'cookies' in connectionSettings:
-            headers['Cookie'] = '; '.join(['%s=%s' % (key, value) for (key, value) in connectionSettings['cookies'].items()])
-        headers['User-Agent'] = 'PDFreactor Python API v8'
-        headers['X-RO-User-Agent'] = 'PDFreactor Python API v8'
         req = None
         try:
-            req = Request(url, None, headers)
+            req = GetRequest(url, None, headers)
             response = urlopen(req)
-            req.get_method = lambda: "get"
             if stream:
                 CHUNK = 2 * 1024
                 while True:
@@ -393,248 +312,86 @@ class PDFreactor:
             else:
                 result = response.read()
         except HTTPError as e:
-            errorId = ''
-            if hasattr(e, 'headers'):
-                errorId = e.headers['X-RO-Error-ID']
-            if e.code == 422:
-                raise self._createServerException(errorId, e.read().decode('utf-8'))
-            elif e.code == 404:
-                raise self._createServerException(errorId, 'Document with the given ID was not found. ' + e.read().decode('utf-8'))
-            elif e.code == 401:
-                raise self._createServerException(errorId, 'Unauthorized. ' + e.read().decode('utf-8'))
-            elif e.code == 503:
-                raise self._createServerException(errorId, 'PDFreactor Web Service is unavailable.')
-            elif e.code > 400:
-                raise self._createServerException(errorId, 'PDFreactor Web Service error (status: ' + str(e.code) + ').')
+            raise ServerException(e)
         except Exception as e:
-            msg = e
-            if hasattr(e, 'reason'):
-                msg = e.reason
-            raise UnreachableServiceException('Error connecting to PDFreactor Web Service at ' + self.url + '. Please make sure the PDFreactor Web Service is installed and running (Error: ' + str(msg) + ')')
+            raise UnreachableServiceException(e, url)
         return result
 
     def getDocumentMetadata(self, documentId, connectionSettings=None):
+        headers = self._spiced_headers(connectionSettings)
+
         url = self.url + "/document/metadata/" + documentId + ".json"
         if self.apiKey != None:
-            url += '?apiKey=' + self.apiKey
+            url += '?apiKey=' + quoted_key(self.apiKey)
         result = ""
-        if (connectionSettings is not None and 'headers' in connectionSettings and len(connectionSettings['headers'].keys()) == False):
-            headers = connectionSettings['headers']
-        else:
-            headers = {}
-            if connectionSettings is not None and 'headers' in connectionSettings:
-                for (key, value) in connectionSettings['headers'].items():
-                    lcKey = key.lower()
-                    if lcKey != "content-type" and lcKey != "range" and lcKey != "user-agent":
-                        headers[key] = value
-        headers['Content-Type'] = 'application/json'
-        if connectionSettings is not None and 'cookies' in connectionSettings:
-            headers['Cookie'] = '; '.join(['%s=%s' % (key, value) for (key, value) in connectionSettings['cookies'].items()])
-        headers['User-Agent'] = 'PDFreactor Python API v8'
-        headers['X-RO-User-Agent'] = 'PDFreactor Python API v8'
         req = None
         try:
-            req = Request(url, None, headers)
+            req = GetRequest(url, None, headers)
             response = urlopen(req)
-            req.get_method = lambda: "get"
             result = response.read().decode('utf-8')
         except HTTPError as e:
-            result = json.loads(e.read().decode('utf-8'))
-            errorId = ''
-            if hasattr(e, 'headers'):
-                errorId = e.headers['X-RO-Error-ID']
-            if e.code == 422:
-                raise self._createServerException(errorId, result['error'], result)
-            elif e.code == 404:
-                raise self._createServerException(errorId, 'Document with the given ID was not found. ' + result['error'], result)
-            elif e.code == 401:
-                raise self._createServerException(errorId, 'Unauthorized. ' + result['error'], result)
-            elif e.code == 503:
-                raise self._createServerException(errorId, 'PDFreactor Web Service is unavailable.', result)
-            elif e.code > 400:
-                raise self._createServerException(errorId, 'PDFreactor Web Service error (status: ' + str(e.code) + ').', result)
+            raise ServerException(e)
         except Exception as e:
-            msg = e
-            if hasattr(e, 'reason'):
-                msg = e.reason
-            raise UnreachableServiceException('Error connecting to PDFreactor Web Service at ' + self.url + '. Please make sure the PDFreactor Web Service is installed and running (Error: ' + str(msg) + ')')
+            raise UnreachableServiceException(e, url)
         return json.loads(result)
 
     def deleteDocument(self, documentId, connectionSettings=None):
+        headers = self._spiced_headers(connectionSettings)
+
         url = self.url + "/document/" + documentId + ".json"
         if self.apiKey != None:
-            url += '?apiKey=' + self.apiKey
+            url += '?apiKey=' + quoted_key(self.apiKey)
         result = ""
-        if (connectionSettings is not None and 'headers' in connectionSettings and len(connectionSettings['headers'].keys()) == False):
-            headers = connectionSettings['headers']
-        else:
-            headers = {}
-            if connectionSettings is not None and 'headers' in connectionSettings:
-                for (key, value) in connectionSettings['headers'].items():
-                    lcKey = key.lower()
-                    if lcKey != "content-type" and lcKey != "range" and lcKey != "user-agent":
-                        headers[key] = value
-        headers['Content-Type'] = 'application/json'
-        if connectionSettings is not None and 'cookies' in connectionSettings:
-            headers['Cookie'] = '; '.join(['%s=%s' % (key, value) for (key, value) in connectionSettings['cookies'].items()])
-        headers['User-Agent'] = 'PDFreactor Python API v8'
-        headers['X-RO-User-Agent'] = 'PDFreactor Python API v8'
         req = None
         try:
-            req = Request(url, None, headers)
+            req = DeleteRequest(url, None, headers)
             response = urlopen(req)
-            req.get_method = lambda: "delete"
             result = response.read().decode('utf-8')
         except HTTPError as e:
-            result = json.loads(e.read().decode('utf-8'))
-            errorId = ''
-            if hasattr(e, 'headers'):
-                errorId = e.headers['X-RO-Error-ID']
-            if e.code == 404:
-                raise self._createServerException(errorId, 'Document with the given ID was not found. ' + result['error'], result)
-            elif e.code == 401:
-                raise self._createServerException(errorId, 'Unauthorized. ' + result['error'], result)
-            elif e.code == 503:
-                raise self._createServerException(errorId, 'PDFreactor Web Service is unavailable.', result)
-            elif e.code > 400:
-                raise self._createServerException(errorId, 'PDFreactor Web Service error (status: ' + str(e.code) + ').', result)
+            raise ServerException(e)
         except Exception as e:
-            msg = e
-            if hasattr(e, 'reason'):
-                msg = e.reason
-            raise UnreachableServiceException('Error connecting to PDFreactor Web Service at ' + self.url + '. Please make sure the PDFreactor Web Service is installed and running (Error: ' + str(msg) + ')')
+            raise UnreachableServiceException(e, url)
 
     def getVersion(self, connectionSettings=None):
+        headers = self._spiced_headers(connectionSettings)
+
         url = self.url + "/version.json"
         if self.apiKey != None:
-            url += '?apiKey=' + self.apiKey
+            url += '?apiKey=' + quoted_key(self.apiKey)
         result = ""
-        if (connectionSettings is not None and 'headers' in connectionSettings and len(connectionSettings['headers'].keys()) == False):
-            headers = connectionSettings['headers']
-        else:
-            headers = {}
-            if connectionSettings is not None and 'headers' in connectionSettings:
-                for (key, value) in connectionSettings['headers'].items():
-                    lcKey = key.lower()
-                    if lcKey != "content-type" and lcKey != "range" and lcKey != "user-agent":
-                        headers[key] = value
-        headers['Content-Type'] = 'application/json'
-        if connectionSettings is not None and 'cookies' in connectionSettings:
-            headers['Cookie'] = '; '.join(['%s=%s' % (key, value) for (key, value) in connectionSettings['cookies'].items()])
-        headers['User-Agent'] = 'PDFreactor Python API v8'
-        headers['X-RO-User-Agent'] = 'PDFreactor Python API v8'
         req = None
         try:
-            req = Request(url, None, headers)
+            req = GetRequest(url, None, headers)
             response = urlopen(req)
-            req.get_method = lambda: "get"
             result = response.read().decode('utf-8')
         except HTTPError as e:
-            result = json.loads(e.read().decode('utf-8'))
-            errorId = ''
-            if hasattr(e, 'headers'):
-                errorId = e.headers['X-RO-Error-ID']
-            if e.code == 401:
-                raise self._createServerException(errorId, 'Unauthorized. ' + result['error'], result)
-            elif e.code == 503:
-                raise self._createServerException(errorId, 'PDFreactor Web Service is unavailable.', result)
-            elif e.code > 400:
-                raise self._createServerException(errorId, 'PDFreactor Web Service error (status: ' + str(e.code) + ').', result)
+            raise ServerException(e)
         except Exception as e:
-            msg = e
-            if hasattr(e, 'reason'):
-                msg = e.reason
-            raise UnreachableServiceException('Error connecting to PDFreactor Web Service at ' + self.url + '. Please make sure the PDFreactor Web Service is installed and running (Error: ' + str(msg) + ')')
+            raise UnreachableServiceException(e, url)
         return json.loads(result)
 
     def getStatus(self, connectionSettings=None):
+        headers = self._spiced_headers(connectionSettings)
+
         url = self.url + "/status"
         if self.apiKey != None:
-            url += '?apiKey=' + self.apiKey
+            url += '?apiKey=' + quoted_key(self.apiKey)
         result = ""
-        if (connectionSettings is not None and 'headers' in connectionSettings and len(connectionSettings['headers'].keys()) == False):
-            headers = connectionSettings['headers']
-        else:
-            headers = {}
-            if connectionSettings is not None and 'headers' in connectionSettings:
-                for (key, value) in connectionSettings['headers'].items():
-                    lcKey = key.lower()
-                    if lcKey != "content-type" and lcKey != "range" and lcKey != "user-agent":
-                        headers[key] = value
-        headers['Content-Type'] = 'application/json'
-        if connectionSettings is not None and 'cookies' in connectionSettings:
-            headers['Cookie'] = '; '.join(['%s=%s' % (key, value) for (key, value) in connectionSettings['cookies'].items()])
-        headers['User-Agent'] = 'PDFreactor Python API v8'
-        headers['X-RO-User-Agent'] = 'PDFreactor Python API v8'
         req = None
         try:
-            req = Request(url, None, headers)
+            req = GetRequest(url, None, headers)
             response = urlopen(req)
-            req.get_method = lambda: "get"
             result = response.read().decode('utf-8')
         except HTTPError as e:
-            result = json.loads(e.read().decode('utf-8'))
-            errorId = ''
-            if hasattr(e, 'headers'):
-                errorId = e.headers['X-RO-Error-ID']
-            if e.code == 401:
-                raise self._createServerException(errorId, 'Unauthorized. ' + result['error'], result)
-            elif e.code == 503:
-                raise self._createServerException(errorId, 'PDFreactor Web Service is unavailable.', result)
-            elif e.code > 400:
-                raise self._createServerException(errorId, 'PDFreactor Web Service error (status: ' + str(e.code) + ').', result)
+            raise ServerException(e)
         except Exception as e:
-            msg = e
-            if hasattr(e, 'reason'):
-                msg = e.reason
-            raise UnreachableServiceException('Error connecting to PDFreactor Web Service at ' + self.url + '. Please make sure the PDFreactor Web Service is installed and running (Error: ' + str(msg) + ')')
+            raise UnreachableServiceException(e, url)
 
     def getDocumentUrl(self, documentId):
         return self.url + "/document/" + documentId
 
     def getProgressUrl(self, documentId):
         return self.url + "/progress/" + documentId
-    VERSION = 8
-
-    def _createServerException(self, errorId=None, message=None, result=None):
-        if errorId == 'server':
-            return ServerException(errorId, message, result)
-        elif errorId == 'asyncUnavailable':
-            return AsyncUnavailableException(errorId, message, result)
-        elif errorId == 'badRequest':
-            return BadRequestException(errorId, message, result)
-        elif errorId == 'commandRejected':
-            return CommandRejectedException(errorId, message, result)
-        elif errorId == 'conversionAborted':
-            return ConversionAbortedException(errorId, message, result)
-        elif errorId == 'conversionFailure':
-            return ConversionFailureException(errorId, message, result)
-        elif errorId == 'documentNotFound':
-            return DocumentNotFoundException(errorId, message, result)
-        elif errorId == 'resourceNotFound':
-            return ResourceNotFoundException(errorId, message, result)
-        elif errorId == 'invalidClient':
-            return InvalidClientException(errorId, message, result)
-        elif errorId == 'invalidConfiguration':
-            return InvalidConfigurationException(errorId, message, result)
-        elif errorId == 'noConfiguration':
-            return NoConfigurationException(errorId, message, result)
-        elif errorId == 'noInputDocument':
-            return NoInputDocumentException(errorId, message, result)
-        elif errorId == 'requestRejected':
-            return RequestRejectedException(errorId, message, result)
-        elif errorId == 'serviceUnavailable':
-            return ServiceUnavailableException(errorId, message, result)
-        elif errorId == 'unauthorized':
-            return UnauthorizedException(errorId, message, result)
-        elif errorId == 'unprocessableConfiguration':
-            return UnprocessableConfigurationException(errorId, message, result)
-        elif errorId == 'unprocessableInput':
-            return UnprocessableInputException(errorId, message, result)
-        elif errorId == 'notAcceptable':
-            return NotAcceptableException(errorId, message, result)
-        else:
-            return ServerException(errorId, message, result)
 
     class CallbackType:
         FINISH = "FINISH"
@@ -909,114 +666,5 @@ class PDFreactor:
         LOW = "LOW"
         NONE = "NONE"
 
-
-class PDFreactorWebserviceException(Exception):
-    def __init__(self, message):
-        super(PDFreactorWebserviceException, self).__init__(message or "Unknown PDFreactor Web Service error")
-
-
-class ServerException(PDFreactorWebserviceException):
-    def __init__(self, errorId, message, result=None):
-        super(ServerException, self).__init__(message)
-        self.errorId = errorId
-        self.result = result
-
-
-class ClientException(PDFreactorWebserviceException):
-    def __init__(self, message):
-        super(ClientException, self).__init__(message)
-
-
-class AsyncUnavailableException(ServerException):
-    def __init__(self, errorId, message, result=None):
-        super(AsyncUnavailableException, self).__init__(errorId, message, result)
-
-
-class BadRequestException(ServerException):
-    def __init__(self, errorId, message, result=None):
-        super(BadRequestException, self).__init__(errorId, message, result)
-
-
-class CommandRejectedException(ServerException):
-    def __init__(self, errorId, message, result=None):
-        super(CommandRejectedException, self).__init__(errorId, message, result)
-
-
-class ConversionAbortedException(ServerException):
-    def __init__(self, errorId, message, result=None):
-        super(ConversionAbortedException, self).__init__(errorId, message, result)
-
-
-class ConversionFailureException(ServerException):
-    def __init__(self, errorId, message, result=None):
-        super(ConversionFailureException, self).__init__(errorId, message, result)
-
-
-class DocumentNotFoundException(ServerException):
-    def __init__(self, errorId, message, result=None):
-        super(DocumentNotFoundException, self).__init__(errorId, message, result)
-
-
-class ResourceNotFoundException(ServerException):
-    def __init__(self, errorId, message, result=None):
-        super(ResourceNotFoundException, self).__init__(errorId, message, result)
-
-
-class InvalidClientException(ServerException):
-    def __init__(self, errorId, message, result=None):
-        super(InvalidClientException, self).__init__(errorId, message, result)
-
-
-class InvalidConfigurationException(ServerException):
-    def __init__(self, errorId, message, result=None):
-        super(InvalidConfigurationException, self).__init__(errorId, message, result)
-
-
-class NoConfigurationException(ServerException):
-    def __init__(self, errorId, message, result=None):
-        super(NoConfigurationException, self).__init__(errorId, message, result)
-
-
-class NoInputDocumentException(ServerException):
-    def __init__(self, errorId, message, result=None):
-        super(NoInputDocumentException, self).__init__(errorId, message, result)
-
-
-class RequestRejectedException(ServerException):
-    def __init__(self, errorId, message, result=None):
-        super(RequestRejectedException, self).__init__(errorId, message, result)
-
-
-class ServiceUnavailableException(ServerException):
-    def __init__(self, errorId, message, result=None):
-        super(ServiceUnavailableException, self).__init__(errorId, message, result)
-
-
-class UnauthorizedException(ServerException):
-    def __init__(self, errorId, message, result=None):
-        super(UnauthorizedException, self).__init__(errorId, message, result)
-
-
-class UnprocessableConfigurationException(ServerException):
-    def __init__(self, errorId, message, result=None):
-        super(UnprocessableConfigurationException, self).__init__(errorId, message, result)
-
-
-class UnprocessableInputException(ServerException):
-    def __init__(self, errorId, message, result=None):
-        super(UnprocessableInputException, self).__init__(errorId, message, result)
-
-
-class NotAcceptableException(ServerException):
-    def __init__(self, errorId, message, result=None):
-        super(NotAcceptableException, self).__init__(errorId, message, result)
-
-
-class UnreachableServiceException(ClientException):
-    def __init__(self, message):
-        super(UnreachableServiceException, self).__init__(message)
-
-
-class InvalidServiceException(ClientException):
-    def __init__(self, message):
-        super(InvalidServiceException, self).__init__(message)
+from visaplan.tools.debug import pp
+from pdb import set_trace
