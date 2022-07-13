@@ -2,8 +2,8 @@ Changelog
 =========
 
 
-1.0 (unreleased)
-----------------
+1.8.0 (2022-07-12)
+------------------
 
-- Initial release.
+- Initial release, providing a PDFreactor API v8.
   [tobiasherp]

@@ -3,19 +3,26 @@
 from __future__ import absolute_import
 from __future__ import print_function
 
-from setuptools import find_packages
-from setuptools import setup
-from os.path import isfile
+from setuptools import find_packages, setup
+from os.path import isfile, dirname, abspath, join
+from os import chdir, curdir
 
 package_name = 'pdfreactor-api'
 
+mydir = abspath(dirname(__file__))
+def read(fn):
+    with open(join(mydir, fn)) as fo:
+        return fo.read().strip()
 # -------------------------------------------- [ get the version ... [
 def read_version(fn, sfn):
-    main = open(fn).read().strip()
+    backto = abspath(curdir)
+    chdir(mydir)
+    main = read(fn)
     if sfn is not None and isfile(sfn):
-        suffix = valid_suffix(open(sfn).read().strip())
+        suffix = valid_suffix(read(sfn))
     else:
         suffix = ''
+    chdir(backto)
     return main + suffix
     # ... get the version ...
 def valid_suffix(suffix):
@@ -25,7 +32,7 @@ def valid_suffix(suffix):
     suffix = suffix.strip()
     if not suffix:
         return suffix
-    allowed = set('dev.0123456789rcpost')
+    allowed = set('edv.0123456789rcpost')
     disallowed = set(suffix).difference(allowed)
     if disallowed:
         disallowed = ''.join(sorted(disallowed))
@@ -67,22 +74,14 @@ VERSION = read_version('VERSION',
 
 # ------------------------------------------- [ for setup_kwargs ... [
 long_description = '\n\n'.join([
-    open('README.rst').read(),
-    open('CONTRIBUTORS.rst').read(),
-    open('CHANGES.rst').read(),
+    read('README.rst'),
+    read('CONTRIBUTORS.rst'),
+    read('CHANGES.rst'),
 ])
 
 # see as well --> src/pdfreactor-api/configure.zcml:
-exclude_subpackages = (
-        )
-exclude_packages = []
-for subp in exclude_subpackages:
-    exclude_packages.extend([package_name + '.' + subp,
-                             package_name + '.' + subp + '.*',
-                             ])
-packages = find_packages(
-            'src',
-            exclude=exclude_packages)
+namespace = 'pdfreactor'
+packages = find_packages('src')
 
 def github_urls(package, **kwargs):
     pop = kwargs.pop
@@ -147,7 +146,6 @@ setup_kwargs = dict(
     # Get more from https://pypi.org/pypi?%3Aaction=list_classifiers
     classifiers=[
         "Environment :: Web Environment",
-        'Framework :: Zope2',
         "Programming Language :: Python",
         "Programming Language :: Python :: 2.6",
         "Programming Language :: Python :: 2.7",
@@ -164,21 +162,13 @@ setup_kwargs = dict(
     project_urls=project_urls,
     license='MIT License',
     packages=packages,
-    namespace_packages=[
-        'pdfreactor',
-        ],
+    namespace_packages=[namespace],
     package_dir={'': 'src'},
     include_package_data=True,
     zip_safe=False,
     install_requires=[
         'setuptools',
-        # -*- Extra requirements: -*-
-        # ... further requirements removed
     ],
-    entry_points="""
-    [z3c.autoinclude.plugin]
-    target = plone
-    """,
 )
 if 0:
     from pprint import pprint
