@@ -6,7 +6,7 @@ Changelog
 
 Bugfixes:
 
-- Fixed `issue 1`, "convertAsBinary fails if apiKey is configured"
+- Fixed `issue 1`_, "convertAsBinary fails if apiKey is configured"
   [tobiasherp]
 
 
