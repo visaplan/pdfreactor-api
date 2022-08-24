@@ -3,6 +3,10 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# backup and temporary files
+*~
+.*.sw[pqrts]
+
 # C extensions
 *.so
 
@@ -121,6 +125,7 @@ include/
 auto.msg
 update-module
 tools/
+CHANGES-in-*.rst
 
 # Portable editor configuration
 .editorconfig
