@@ -202,7 +202,6 @@ class PDFreactor:
 
         url = self.url + "/convert.bin"
         if self.apiKey != None:
-            set_trace()
             url += '?apiKey=' + self.apiKey
         try:
             options = json.dumps(config)
@@ -666,5 +665,3 @@ class PDFreactor:
         HIGH = "HIGH"
         LOW = "LOW"
         NONE = "NONE"
-
-from pdb import set_trace
