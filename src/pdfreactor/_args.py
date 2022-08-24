@@ -19,8 +19,15 @@ def _sacs(*args, **kwargs):
     The first unnamed option is the config dict (which may be None)
     or the documentId; this is handled by the respective method code before
     _sacs is called.
+
+    >>> _sacs()
+    (None, None)
+
     >>> _sacs(None)
     (None, None)
+
+    >>> _sacs({'my': 'connection-settings'})
+    (None, {'my': 'connection-settings'})
 
     >>> _sacs(None, {'some': 'connection-settings'})
     (None, {'some': 'connection-settings'})
