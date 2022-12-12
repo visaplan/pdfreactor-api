@@ -167,7 +167,7 @@ class PDFreactor:
             headers[key] = API_HEADERS[key]
         # NOTE: these cookies won't be sent back by the PDFreactor service to
         # your client; for this to happen (e.g to make exports of restricted
-        # contents of your server, specify config['cookies']
+        # contents of your server), specify config['cookies']
         # (a list of {'key': ..., 'value': ...} dictionaries) 
         if 'cookies' in connectionSettings:
             headers['Cookie'] = '; '.join([
