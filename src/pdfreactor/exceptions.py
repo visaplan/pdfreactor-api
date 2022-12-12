@@ -91,15 +91,22 @@ class ServerException(HTTPError, PDFreactorWebserviceException):
     @property
     def pdfreactor_error(self):
         text = self.result
-        rslt = json.loads(text)
-        if isinstance(rslt, dict):
-            return rslt.get('error', '<no error key in response text>')
-        else:
-            # limit the amount of text; this is about error processing only:
-            body = txt[:200]
-            tail = txt[200:] and '[...]' or ''
-            return ('<no JSON object in response text: %(body)r%(tail)s>'
-                    % locals())
+        if not text:
+            return '<result attribute is empty>'
+        elif text.startswith(u'<'):
+            return '<XML text: %(text)r>' % locals()
+        try:
+            rslt = json.loads(text)
+            if isinstance(rslt, dict):
+                return rslt.get('error', '<no error key in response text>')
+            else:
+                # limit the amount of text; this is about error processing only:
+                body = txt[:200]
+                tail = txt[200:] and '[...]' or ''
+                return ('<no JSON object in response text: %(body)r%(tail)s>'
+                        % locals())
+        except ValueError:
+            return '<no-JSON value %(text)r>' % locals()
 
     @property
     def pdfreactor_says(self):

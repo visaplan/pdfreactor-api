@@ -1,6 +1,19 @@
 Changelog
 =========
 
+
+1.8.2 (unreleased)
+------------------
+
+Bugfixes:
+
+- In case of ServerExceptions,
+  the `.result` attribute doesn't contain JSON but XML text;
+  adjusted `.pdfreactor_says` to handle this
+  (and don't raise ValueErrors anymore).
+  [tobiasherp]
+
+
 1.8.1[.post0] (2022-08-24)
 --------------------------
 
