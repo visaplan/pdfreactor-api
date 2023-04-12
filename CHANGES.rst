@@ -2,7 +2,7 @@ Changelog
 =========
 
 
-1.8.2 (unreleased)
+1.8.2 (2023-01-20)
 ------------------
 
 Bugfixes:
@@ -11,6 +11,7 @@ Bugfixes:
   the `.result` attribute doesn't contain JSON but XML text;
   adjusted `.pdfreactor_says` to handle this
   (and don't raise ValueErrors anymore).
+
   [tobiasherp]
 
 
